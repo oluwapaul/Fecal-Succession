@@ -1,0 +1,185 @@
+
+echo "loading bioinfo"
+module load bioinfo
+
+echo "loading qiime2-2021.11"
+module load Qiime/2-2021.11
+
+cd /directory/../
+
+# To make manifest with unix
+# Copy the paths to corresponding sample name
+ls -1 "$PWD/"*R1*
+#copy the path and paste in excel
+ls -1 "$PWD/"*R2*
+
+# After making manifest, you can then proceed to data import step
+
+#data inport
+qiime tools import \
+--type 'SampleData[PairedEndSequencesWithQuality]' \
+--input-path pig_manifest.txt \
+--input-format PairedEndFastqManifestPhred33V2 \
+--output-path ./output/demux-paired-end.qza
+
+#
+qiime demux summarize \
+  --i-data ./output/demux-paired-end.qza \
+  --o-visualization ./output/demux-paired-end.qzv
+
+
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs ./output/demux-paired-end_comb.qza \
+  --p-trim-left-f 13 \
+  --p-trim-left-r 13 \
+  --p-trunc-len-f 250 \
+  --p-trunc-len-r 250 \
+  --o-table ./output2/table.qza \
+  --o-representative-sequences ./output/rep-seqs.qza \
+  --o-denoising-stats ./output/denoising-stats.qza
+
+
+#Convert .qza to .qzv format
+
+qiime metadata tabulate \
+  --m-input-file ./output/denoising-stats.qza \
+  --o-visualization ./output/denoising-stats.qzv
+
+
+#Create a .qzv from the output of denoise
+qiime feature-table summarize \
+  --i-table ./output/table.qza \
+  --o-visualization ./output/table.qzv \
+  --m-sample-metadata-file pig_metadata.txt
+
+qiime feature-table tabulate-seqs \
+  --i-data ./output2/rep-seqs.qza \
+  --o-visualization ./output/rep-seqs.qzv
+
+
+echo "Create a phylogenetic tree. (Phylogenetic method)"
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences ./output/rep-seqs.qza \
+  --o-alignment ./output/aligned-rep-seqs.qza \
+  --o-masked-alignment ./output/masked-aligned-rep-seqs.qza \
+  --o-tree ./output/unrooted-tree.qza \
+  --o-rooted-tree ./output/rooted-tree.qza
+
+echo "Rarefaction"
+qiime diversity alpha-rarefaction \
+  --i-table ./output/table.qza \
+  --i-phylogeny ./output/rooted-tree.qza \
+  --p-max-depth 40000 \
+  --m-metadata-file pig_metadata.txt \
+  --o-visualization ./output/alpha-rarefaction.qzv
+
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny ./output/rooted-tree.qza \
+  --i-table ./output/table.qza \
+  --p-sampling-depth 19260 \
+  --m-metadata-file pig_metadata.txt \
+  --output-dir ./output/core-metrics-results
+
+
+qiime diversity alpha \
+  --i-table ./output/core-metrics-results/rarefied_table.qza \
+  --p-metric richness \
+  --o-alpha-diversity ./output/core-metrics-results/richness_vector.qza
+
+qiime diversity alpha \
+  --i-table ./output/core-metrics-results/rarefied_table.qza \
+  --p-metric simpson \
+  --o-alpha-diversity ./output/core-metrics-results/simpson_vector.qza
+
+qiime diversity alpha \
+  --i-table ./output/core-metrics-results/rarefied_table.qza \
+  --p-metric simpson_e \
+  --o-alpha-diversity ./output/core-metrics-results/simpson_e_vector.qza
+
+qiime diversity alpha \
+  --i-table ./output/core-metrics-results/rarefied_table.qza \
+  --p-metric shannon \
+  --o-alpha-diversity ./output/core-metrics-results/shannon_vector.qza
+
+echo "Classify and get .qzv"
+qiime feature-classifier classify-sklearn \
+  --i-classifier silva-138-99-515-806-nb-classifier.qza \
+  --i-reads ./output/rep-seqs.qza \
+  --o-classification ./output/taxonomy.qza
+
+qiime metadata tabulate \
+  --m-input-file ./output/taxonomy.qza \
+  --o-visualization ./output/taxonomy.qzv
+
+qiime taxa barplot \
+  --i-table ./output/table.qza \
+  --i-taxonomy ./output/taxonomy.qza \
+  --m-metadata-file pig_metadata.txt \
+  --o-visualization ./output/taxa-bar-plots.qzv
+
+
+
+# Unweighted_Unifrac significance test
+qiime diversity beta-group-significance \
+  --i-distance-matrix ./output/core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file pig_metadata.txt \
+  --m-metadata-column Day \
+  --o-visualization ./output/core-metrics-results/unweighted-day-significance.qzv \
+  --p-pairwise
+
+
+# Weighted_Unifrac significance test
+qiime diversity beta-group-significance \
+  --i-distance-matrix ./output/core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file pig_metadata.txt \
+  --m-metadata-column Day \
+  --o-visualization ./output/core-metrics-results/weighted-day-significance.qzv \
+  --p-pairwise
+
+# Bray Curtis significant test
+qiime diversity beta-group-significance \
+  --i-distance-matrix ./output/core-metrics-results/bray_curtis_distance_matrix.qza \
+  --m-metadata-file pig_metadata.txt \
+  --m-metadata-column Day \
+  --o-visualization ./output/core-metrics-results/bray_curtis-day-significance.qzv \
+  --p-pairwise
+
+
+# Jaccard significance test
+qiime diversity beta-group-significance \
+  --i-distance-matrix ./output/core-metrics-results/jaccard_distance_matrix.qza \
+  --m-metadata-file pig_metadata.txt \
+  --m-metadata-column Day \
+  --o-visualization ./output/core-metrics-results/jaccard-day-significance.qzv \
+  --p-pairwise
+
+
+
+# PICRUST Analysis
+
+module load conda-env/qiime2-2021.11-py3.8.5
+
+qiime picrust2 full-pipeline \
+   --i-table table.qza \
+   --i-seq rep-seqs.qza \
+   --output-dir q2-picrust2_output \
+   --p-placement-tool sepp \
+   --p-threads 1 \
+   --p-hsp-method pic \
+   --p-max-nsti 2 \
+   --verbose
+
+
+#Make PICRUST table in qzv
+qiime feature-table summarize \
+   --i-table q2-picrust2_output/pathway_abundance.qza \
+   --o-visualization q2-picrust2_output/pathway_abundance.qzv
+
+
+#PICRUST Diversity
+qiime diversity core-metrics \
+   --i-table q2-picrust2_output/pathway_abundance.qza \
+   --p-sampling-depth 1543808 \
+   --m-metadata-file pig_metadata.txt \
+   --output-dir pathabun_core_metrics_out \
+   --p-n-jobs 1
